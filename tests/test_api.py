@@ -128,7 +128,7 @@ def test_explain_endpoint_with_active_model(client):
     original_is_loaded = model_artifacts["is_loaded"]
     original_model = model_artifacts["model"]
     original_prep = model_artifacts["preprocessor"]
-    original_prep = model_artifacts["preprocessor"]
+    original_bg = explainability_service.background_data
 
     class MockPreprocessor:
         def transform(self, df):
@@ -199,3 +199,48 @@ def test_explain_endpoint_with_active_model(client):
         model_artifacts["is_loaded"] = original_is_loaded
         model_artifacts["model"] = original_model
         model_artifacts["preprocessor"] = original_prep
+        if original_model is not None:
+            explainability_service.set_model_artifacts(
+                model=original_model,
+                preprocessor=original_prep,
+                feature_names=model_artifacts.get("feature_names"),
+                background_data=original_bg,
+            )
+
+
+def test_xgboost_no_smote_model_active(client):
+    """Verify that the selected XGBoost No SMOTE model is loaded and operational."""
+    from src.api import model_artifacts
+
+    assert model_artifacts["is_loaded"] is True
+    assert "XGB" in model_artifacts["model_name"]
+
+    health = client.get("/health").json()
+    assert health["is_model_loaded"] is True
+    assert "XGB" in health["model_name"]
+
+
+def test_xgboost_explain_real_transaction(client):
+    """Verify that /explain produces live SHAP explanations on the XGBoost model."""
+    payload = {
+        "Sender_account": "ACC-891024",
+        "Receiver_account": "ACC-381940",
+        "Amount": 12500.0,
+        "Payment_currency": "US Dollar",
+        "Received_currency": "Euro",
+        "Sender_bank_location": "USA",
+        "Receiver_bank_location": "Switzerland",
+        "Payment_type": "Cross-border",
+        "Date": "2023-10-15",
+        "Time": "23:45:10",
+    }
+    response = client.post("/explain?method=shap&top_k=5", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["method"] == "shap"
+    assert "XGB" in data["model_name"]
+    assert len(data["domain_contributions"]) > 0
+    assert len(data["raw_contributions"]) > 0
+    assert "disclaimer" in data
+
+
