@@ -625,3 +625,23 @@ def test_explainability_service_hot_reload(synthetic_tabular_data):
 
     exp = service.explain_transaction(X[0], method="shap")
     assert exp.model_name == "LogisticRegression"
+
+
+def test_shap_tree_adapter_xgboost(synthetic_tabular_data):
+    """Verify ShapAdapter correctly identifies and runs on XGBClassifier."""
+    from xgboost import XGBClassifier
+
+    X, y, feature_names = synthetic_tabular_data
+    xgb = XGBClassifier(n_estimators=10, max_depth=3, random_state=42, eval_metric="aucpr")
+    xgb.fit(X, y)
+
+    adapter = ShapAdapter(model=xgb, feature_names=feature_names)
+    assert adapter.explainer_type == "TreeExplainer"
+
+    local_exp = adapter.explain_instance(X[0], top_k=5)
+    assert local_exp.method == ExplanationMethod.SHAP
+    assert local_exp.model_name == "XGBClassifier"
+    assert len(local_exp.raw_contributions) == min(5, len(feature_names))
+    assert len(local_exp.domain_contributions) > 0
+    assert 0.0 <= local_exp.predicted_risk_score <= 1.0
+

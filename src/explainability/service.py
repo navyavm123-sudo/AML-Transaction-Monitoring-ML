@@ -82,9 +82,15 @@ class ExplainabilityService:
         self.selector = selector
         self._explainers.clear()
 
-        # Update background if provided, or retain existing
+        # Update background if provided, or retain existing if dimensions match
         if background_data is not None:
             self.background_data = background_data
+        elif self.background_data is not None and self.feature_names:
+            if (
+                hasattr(self.background_data, "shape")
+                and self.background_data.shape[1] != len(self.feature_names)
+            ):
+                self.background_data = None
 
         # Derive feature names if not provided
         if feature_names:
@@ -150,21 +156,28 @@ class ExplainabilityService:
     def transform_raw_record(
         self, raw_record: Dict[str, Any]
     ) -> Union[np.ndarray, scipy.sparse.spmatrix]:
-        """Apply preprocessor and selector pipelines to a raw transaction dictionary."""
+        """Apply feature engineering, preprocessor and selector pipelines to a raw transaction dictionary."""
+        from src.features.pipeline import engineer_features
+
         # Sanitize raw record: prevent target leakage
         clean_dict = {
             k: v
             for k, v in raw_record.items()
-            if k not in ("Is_laundering", "Laundering_type")
+            if k != "Is_laundering"
         }
+        if "Laundering_type" not in clean_dict or clean_dict["Laundering_type"] is None:
+            clean_dict["Laundering_type"] = "Unknown"
 
-        df = pd.DataFrame([clean_dict])
+        df = engineer_features(clean_dict)
 
         if self.preprocessor is not None:
             try:
                 X_proc = self.preprocessor.transform(df)
                 if self.selector is not None:
-                    X_proc = self.selector.transform(X_proc)
+                    try:
+                        X_proc = self.selector.transform(X_proc)
+                    except Exception as sel_err:
+                        logger.debug(f"Selector transform skipped: {sel_err}")
                 return X_proc
             except Exception as e:
                 raise IncompatibleFeatureSchemaError(

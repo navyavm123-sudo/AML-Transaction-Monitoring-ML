@@ -53,29 +53,32 @@ logger = logging.getLogger("aml_api")
 
 
 # ==============================================================================
-# 🎯 MODEL LOADING & INFERENCE (EDIT THIS SECTION FOR YOUR KAGGLE MODEL)
-# ==============================================================================
-# Instructions:
-# 1. Download your trained model from your Kaggle notebook (.joblib, .pkl, .xgb, etc.)
-# 2. Place it in the 'models_saved/' folder (e.g., 'models_saved/best_model.joblib')
-# 3. Update MODEL_PATH below if your filename differs.
-# 4. If you have a fitted preprocessor, put it in 'data/processed/preprocessor.joblib'
+# 🎯 MODEL LOADING & INFERENCE (XGBoost No SMOTE Selected Model)
 # ==============================================================================
 
-# Default path to your trained model file
+# Default path to trained model file (XGBoost No SMOTE)
 DEFAULT_MODEL_FILENAME = "best_model.joblib"
 MODEL_PATH = Path(os.getenv("MODEL_PATH", str(MODELS_DIR / DEFAULT_MODEL_FILENAME)))
-PREPROCESSOR_PATH = PROCESSED_DATA_DIR / "preprocessor.joblib"
+PREPROCESSOR_PATH = (
+    MODELS_DIR / "preprocessor.joblib"
+    if (MODELS_DIR / "preprocessor.joblib").exists()
+    else PROCESSED_DATA_DIR / "preprocessor.joblib"
+)
 SELECTOR_PATH = PROCESSED_DATA_DIR / "selector.joblib"
+METADATA_PATH = MODELS_DIR / "model_metadata.json"
+FEATURE_NAMES_PATH = MODELS_DIR / "feature_names.json"
 
 # Global state to hold loaded artifacts
 model_artifacts = {
     "model": None,
     "preprocessor": None,
     "selector": None,
+    "feature_names": None,
+    "metadata": {},
+    "threshold": 0.5,
     "is_loaded": False,
-    "model_name": "Placeholder / Fallback Predictor",
-    "version": "1.0.0-dev",
+    "model_name": "XGBoost (No SMOTE)",
+    "version": "1.0.0-xgb-no-smote",
 }
 
 # Explainability Service Facade
@@ -83,22 +86,23 @@ explainability_service = ExplainabilityService()
 
 
 def load_model_artifacts():
-    """Loads the trained model and preprocessing pipeline from disk.
-
-    EDIT THIS FUNCTION if your Kaggle model requires special loading logic
-    (e.g., lightgbm.Booster, xgboost.Booster, torch.load, or custom weights).
-    """
+    """Loads the trained XGBoost (No SMOTE) model and preprocessing pipeline from disk."""
     logger.info("Attempting to load model artifacts...")
 
-    # 1. Check for Preprocessor (Optional / Preprocessing pipeline)
-    if PREPROCESSOR_PATH.exists():
+    # 1. Check for Preprocessor
+    target_prep_path = (
+        MODELS_DIR / "preprocessor.joblib"
+        if (MODELS_DIR / "preprocessor.joblib").exists()
+        else PREPROCESSOR_PATH
+    )
+    if target_prep_path.exists():
         try:
-            model_artifacts["preprocessor"] = joblib.load(PREPROCESSOR_PATH)
-            logger.info(f"Loaded feature preprocessor from: {PREPROCESSOR_PATH}")
+            model_artifacts["preprocessor"] = joblib.load(target_prep_path)
+            logger.info(f"Loaded feature preprocessor from: {target_prep_path}")
         except Exception as e:
             logger.warning(f"Could not load preprocessor ({e}). Proceeding without it.")
 
-    # 2. Check for Feature Selector (Optional)
+    # 2. Check for Feature Selector
     if SELECTOR_PATH.exists():
         try:
             model_artifacts["selector"] = joblib.load(SELECTOR_PATH)
@@ -106,35 +110,90 @@ def load_model_artifacts():
         except Exception as e:
             logger.warning(f"Could not load selector ({e}). Proceeding without it.")
 
-    # 3. Load Trained Machine Learning Model from Kaggle
-    if MODEL_PATH.exists():
+    # 3. Load Feature Names if present
+    if FEATURE_NAMES_PATH.exists():
         try:
-            loaded_model = joblib.load(MODEL_PATH)
-            model_artifacts["model"] = loaded_model
-            model_artifacts["is_loaded"] = True
-            model_artifacts["model_name"] = type(loaded_model).__name__
+            import json
+
+            with open(FEATURE_NAMES_PATH) as f:
+                model_artifacts["feature_names"] = json.load(f)
             logger.info(
-                f"Successfully loaded trained Kaggle model ({model_artifacts['model_name']}) from {MODEL_PATH}"
+                f"Loaded {len(model_artifacts['feature_names'])} feature names from: {FEATURE_NAMES_PATH}"
             )
         except Exception as e:
-            logger.error(f"Error loading model from {MODEL_PATH}: {e}")
+            logger.warning(f"Could not load feature names ({e}).")
+
+    # 4. Load Metadata (tuned thresholds, training tags)
+    if METADATA_PATH.exists():
+        try:
+            import json
+
+            with open(METADATA_PATH) as f:
+                meta = json.load(f)
+            model_artifacts["metadata"] = meta
+            if "threshold" in meta:
+                model_artifacts["threshold"] = float(meta["threshold"])
+            if "model_name" in meta:
+                model_artifacts["model_name"] = meta["model_name"]
+            logger.info(
+                f"Loaded model metadata from {METADATA_PATH} (threshold={model_artifacts['threshold']})"
+            )
+        except Exception as e:
+            logger.warning(f"Could not load model metadata: {e}")
+
+    # 5. Determine candidate model file path
+    candidate_path = MODEL_PATH
+    if not candidate_path.exists():
+        alt_paths = [
+            MODELS_DIR / "xgboost_no_smote.joblib",
+            MODELS_DIR / "best_model.joblib",
+            MODELS_DIR / "xgboost_no_smote.json",
+        ]
+        for p in alt_paths:
+            if p.exists():
+                candidate_path = p
+                break
+
+    # 6. Load Trained XGBoost / ML Model
+    if candidate_path.exists():
+        try:
+            if str(candidate_path).endswith(".json"):
+                from xgboost import XGBClassifier
+
+                loaded_model = XGBClassifier()
+                loaded_model.load_model(str(candidate_path))
+            else:
+                loaded_model = joblib.load(candidate_path)
+
+            model_artifacts["model"] = loaded_model
+            model_artifacts["is_loaded"] = True
+            model_cls = type(loaded_model).__name__
+            if "xgb" in model_cls.lower():
+                model_artifacts["model_name"] = "XGBoost (No SMOTE)"
+            else:
+                model_artifacts["model_name"] = model_cls
+
+            logger.info(
+                f"Successfully loaded trained AML model ({model_artifacts['model_name']}) from {candidate_path}"
+            )
+        except Exception as e:
+            logger.error(f"Error loading model from {candidate_path}: {e}")
             model_artifacts["is_loaded"] = False
     else:
         logger.warning(
-            f"No trained model found at '{MODEL_PATH}'. "
-            "Running in mock / placeholder mode. "
-            "Drop your Kaggle model into 'models_saved/' to enable real ML inference."
+            f"No trained model found at '{candidate_path}'. Running in fallback mode."
         )
         model_artifacts["is_loaded"] = False
-        model_artifacts["model_name"] = "Mock-Predictor (Waiting for Kaggle model)"
+        model_artifacts["model_name"] = "Mock-Predictor (Waiting for model)"
 
-    # 4. Synchronize Explainability Service with Loaded Artifacts
+    # 7. Synchronize Explainability Service with Loaded Artifacts
     if model_artifacts["is_loaded"] and model_artifacts["model"] is not None:
         try:
             explainability_service.set_model_artifacts(
                 model=model_artifacts["model"],
                 preprocessor=model_artifacts["preprocessor"],
                 selector=model_artifacts["selector"],
+                feature_names=model_artifacts.get("feature_names"),
             )
             logger.info("Configured ExplainabilityService with loaded model artifacts.")
         except Exception as e:
@@ -142,10 +201,7 @@ def load_model_artifacts():
 
 
 def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute prediction pipeline on an incoming transaction.
-
-    EDIT THIS FUNCTION to customize feature transformations or model calls
-    matching your exact Kaggle notebook pipeline.
+    """Execute prediction pipeline on an incoming transaction using the XGBoost (No SMOTE) model.
 
     Args:
         data_dict: Dictionary containing transaction features.
@@ -156,92 +212,63 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
     model = model_artifacts.get("model")
     preprocessor = model_artifacts.get("preprocessor")
     selector = model_artifacts.get("selector")
+    threshold = model_artifacts.get("threshold", 0.5)
 
-    # If the user's trained Kaggle model is loaded, execute ML inference
+    # If the trained model is loaded, execute ML inference
     if model_artifacts["is_loaded"] and model is not None:
         try:
-            # Convert raw input to DataFrame
-            df = pd.DataFrame([data_dict])
+            from src.features.pipeline import engineer_features
 
-            # -------------------------------------------------------------
-            # Feature Engineering (mirroring notebook pipeline)
-            # -------------------------------------------------------------
-            if "Date" in df.columns and "Time" in df.columns:
-                df["Date_dt"] = pd.to_datetime(df["Date"], errors="coerce")
-                df["Year"] = df["Date_dt"].dt.year.fillna(2023)
-                df["Month"] = df["Date_dt"].dt.month.fillna(1)
-                df["Day"] = df["Date_dt"].dt.day.fillna(1)
-                df["DayOfWeek"] = df["Date_dt"].dt.dayofweek.fillna(0)
-                df["Is_weekend"] = (df["DayOfWeek"] >= 5).astype(int)
+            # Apply domain feature transformations
+            df_eng = engineer_features(data_dict)
 
-                time_series = pd.to_datetime(
-                    df["Time"], format="%H:%M:%S", errors="coerce"
-                )
-                df["Hour"] = time_series.dt.hour.fillna(12)
-                df["Is_night"] = ((df["Hour"] < 6) | (df["Hour"] >= 22)).astype(int)
-
-            if "Payment_currency" in df.columns and "Received_currency" in df.columns:
-                df["Same_currency"] = (
-                    df["Payment_currency"] == df["Received_currency"]
-                ).astype(int)
-
-            if (
-                "Sender_bank_location" in df.columns
-                and "Receiver_bank_location" in df.columns
-            ):
-                df["Cross_border"] = (
-                    df["Sender_bank_location"] != df["Receiver_bank_location"]
-                ).astype(int)
-
-            if "Amount" in df.columns:
-                df["Log_amount"] = np.log1p(np.maximum(df["Amount"].astype(float), 0))
-
-            # Apply preprocessor if available
-            X_input = df
+            # Transform through preprocessor pipeline
+            X_input = df_eng
             if preprocessor is not None:
                 try:
-                    X_input = preprocessor.transform(df)
+                    X_input = preprocessor.transform(df_eng)
                     if selector is not None:
-                        X_input = selector.transform(X_input)
+                        try:
+                            X_input = selector.transform(X_input)
+                        except Exception:
+                            pass
                 except Exception as prep_err:
                     logger.debug(f"Preprocessing transform fallback: {prep_err}")
 
-            # Predict probability / decision
+            # Predict probability
             if hasattr(model, "predict_proba"):
                 proba = float(model.predict_proba(X_input)[0, 1])
             elif hasattr(model, "decision_function"):
-                # Sigmoid scaling for decision function
                 score = float(model.decision_function(X_input)[0])
                 proba = 1.0 / (1.0 + np.exp(-score))
             else:
                 pred = int(model.predict(X_input)[0])
                 proba = 1.0 if pred == 1 else 0.0
 
-            prediction = int(proba >= 0.5)
+            prediction = int(proba >= threshold)
+            is_susp = bool(prediction == 1)
 
             return {
                 "risk_score": round(proba, 4),
-                "is_suspicious": bool(prediction == 1),
-                "prediction_label": "Suspicious" if prediction == 1 else "Legitimate",
-                "model_status": "kaggle_model_active",
+                "is_suspicious": is_susp,
+                "prediction_label": "Suspicious" if is_susp else "Legitimate",
+                "model_status": "xgboost_no_smote_active"
+                if "xgboost" in model_artifacts["model_name"].lower()
+                else "ml_model_active",
                 "model_name": model_artifacts["model_name"],
             }
 
         except Exception as e:
             logger.error(f"Inference error with loaded model: {e}", exc_info=True)
-            # Fall back to heuristic rule if custom format doesn't match
             pass
 
-    # -------------------------------------------------------------
-    # Fallback / Mock Inference (Active until Kaggle model is placed)
-    # -------------------------------------------------------------
+    # Fallback heuristic calculation if model unavailable
     amount = float(data_dict.get("Amount", 0.0))
     is_cross_border = data_dict.get("Sender_bank_location") != data_dict.get(
         "Receiver_bank_location"
     )
     is_cash = "Cash" in str(data_dict.get("Payment_type", ""))
 
-    # Simple heuristic risk calculation as placeholder
     simulated_risk = 0.05
     if amount > 10000.0:
         simulated_risk += 0.45
@@ -257,9 +284,9 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
         "risk_score": simulated_risk,
         "is_suspicious": is_suspicious,
         "prediction_label": "Suspicious" if is_suspicious else "Legitimate",
-        "model_status": "awaiting_kaggle_model",
+        "model_status": "awaiting_model",
         "model_name": model_artifacts["model_name"],
-        "note": "Using rule-based simulation. Place your Kaggle model in 'models_saved/best_model.joblib' to activate ML predictions.",
+        "note": "Using rule-based simulation. Trained XGBoost model active when artifacts are placed in 'models_saved/'.",
     }
 
 

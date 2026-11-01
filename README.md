@@ -276,7 +276,7 @@ This project is developed and maintained by:
 | Name | GitHub |
 | :--- | :--- |
 | Navya VM | [@navyavm123-sudo](https://github.com/navyavm123-sudo) |
-| Abhinav | [@abhi-avv](https://github.com/abhi-avv) |
+| Abhinav | [@abhi-navv](https://github.com/abhi-navv) |
 | Anjana | |
 
 **Project Repository**: [navyavm123-sudo/AML-Transaction-Monitoring-ML](https://github.com/navyavm123-sudo/AML-Transaction-Monitoring-ML)
