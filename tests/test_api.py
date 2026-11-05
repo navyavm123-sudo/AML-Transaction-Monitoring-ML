@@ -244,3 +244,29 @@ def test_xgboost_explain_real_transaction(client):
     assert "disclaimer" in data
 
 
+def test_model_info_and_cors_preflight(client):
+    """Verify /model/info metadata and CORS preflight headers for frontend clients."""
+    # 1. /model/info endpoint
+    info_resp = client.get("/model/info")
+    assert info_resp.status_code == 200
+    info_data = info_resp.json()
+    assert info_data["status"] == "healthy"
+    assert info_data["is_model_loaded"] is True
+    assert "threshold" in info_data
+    assert "feature_count" in info_data
+
+    # 2. CORS preflight for frontend origins (Streamlit, React, etc.)
+    for origin in ["http://localhost:8501", "http://localhost:3000"]:
+        preflight = client.options(
+            "/predict",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers.get("access-control-allow-origin") == origin
+
+
+
