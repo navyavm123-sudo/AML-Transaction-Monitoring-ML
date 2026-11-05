@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Union
 import numpy as np
 import pandas as pd
 
+# Outlier bounds computed from the training data (IQR rule on Amount).
+AMOUNT_LOWER, AMOUNT_UPPER = -10328.474999999999, 22930.625
+
 
 def clean_account_id(val: Any) -> float:
     """Extract numeric value from account string or number for standard scaling.
@@ -21,7 +24,7 @@ def clean_account_id(val: Any) -> float:
 
 
 def engineer_features(
-    data: Union[pd.DataFrame, Dict[str, Any], List[Dict[str, Any]]]
+    data: Union[pd.DataFrame, Dict[str, Any], List[Dict[str, Any]]],
 ) -> pd.DataFrame:
     """Perform AML domain feature transformations on incoming transactions.
 
@@ -69,17 +72,27 @@ def engineer_features(
         df["Amount"] = 0.0
 
     df["Log_amount"] = np.log1p(df["Amount"])
+    df["Amount_outlier"] = (
+        (df["Amount"] < AMOUNT_LOWER) | (df["Amount"] > AMOUNT_UPPER)
+    ).astype(int)
 
     # 3. Date & Weekend Indicator
-    date_col = df["Date"] if "Date" in df.columns else pd.Series(["2023-01-01"] * len(df))
+    date_col = (
+        df["Date"] if "Date" in df.columns else pd.Series(["2023-01-01"] * len(df))
+    )
     date_dt = pd.to_datetime(date_col, errors="coerce")
-    day_of_week = date_dt.dt.dayofweek.fillna(0)
+    day_of_week = date_dt.dt.dayofweek.fillna(0).astype(int)
+    df["Year"] = date_dt.dt.year.fillna(2022).astype(int)
+    df["Month"] = date_dt.dt.month.fillna(1).astype(int)
+    df["Day"] = date_dt.dt.day.fillna(1).astype(int)
+    df["DayOfWeek"] = day_of_week
     df["Is_weekend"] = (day_of_week >= 5).astype(int)
 
     # 4. Time & Night Indicator
     time_col = df["Time"] if "Time" in df.columns else pd.Series(["12:00:00"] * len(df))
     time_series = pd.to_datetime(time_col, format="%H:%M:%S", errors="coerce")
-    hour = time_series.dt.hour.fillna(12)
+    hour = time_series.dt.hour.fillna(12).astype(int)
+    df["Hour"] = hour
     df["Is_night"] = ((hour < 6) | (hour >= 22)).astype(int)
 
     # Standardize Time format if needed
@@ -89,12 +102,28 @@ def engineer_features(
         df["Time"] = df["Time"].astype(str).fillna("12:00:00")
 
     # 5. Currency & Location Indicators
-    pay_curr = df["Payment_currency"].astype(str) if "Payment_currency" in df.columns else pd.Series(["Unknown"] * len(df))
-    rec_curr = df["Received_currency"].astype(str) if "Received_currency" in df.columns else pd.Series(["Unknown"] * len(df))
+    pay_curr = (
+        df["Payment_currency"].astype(str)
+        if "Payment_currency" in df.columns
+        else pd.Series(["Unknown"] * len(df))
+    )
+    rec_curr = (
+        df["Received_currency"].astype(str)
+        if "Received_currency" in df.columns
+        else pd.Series(["Unknown"] * len(df))
+    )
     df["Same_currency"] = (pay_curr == rec_curr).astype(int)
 
-    send_loc = df["Sender_bank_location"].astype(str) if "Sender_bank_location" in df.columns else pd.Series(["Unknown"] * len(df))
-    rec_loc = df["Receiver_bank_location"].astype(str) if "Receiver_bank_location" in df.columns else pd.Series(["Unknown"] * len(df))
+    send_loc = (
+        df["Sender_bank_location"].astype(str)
+        if "Sender_bank_location" in df.columns
+        else pd.Series(["Unknown"] * len(df))
+    )
+    rec_loc = (
+        df["Receiver_bank_location"].astype(str)
+        if "Receiver_bank_location" in df.columns
+        else pd.Series(["Unknown"] * len(df))
+    )
     df["Cross_border"] = (send_loc != rec_loc).astype(int)
 
     # Categorical defaults

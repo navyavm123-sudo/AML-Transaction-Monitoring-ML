@@ -128,6 +128,7 @@ def test_explain_endpoint_with_active_model(client):
     original_is_loaded = model_artifacts["is_loaded"]
     original_model = model_artifacts["model"]
     original_prep = model_artifacts["preprocessor"]
+    original_selector = model_artifacts.get("selector")
     original_bg = explainability_service.background_data
 
     class MockPreprocessor:
@@ -199,10 +200,12 @@ def test_explain_endpoint_with_active_model(client):
         model_artifacts["is_loaded"] = original_is_loaded
         model_artifacts["model"] = original_model
         model_artifacts["preprocessor"] = original_prep
+        model_artifacts["selector"] = original_selector
         if original_model is not None:
             explainability_service.set_model_artifacts(
                 model=original_model,
                 preprocessor=original_prep,
+                selector=original_selector,
                 feature_names=model_artifacts.get("feature_names"),
                 background_data=original_bg,
             )
@@ -267,6 +270,3 @@ def test_model_info_and_cors_preflight(client):
         )
         assert preflight.status_code == 200
         assert preflight.headers.get("access-control-allow-origin") == origin
-
-
-
