@@ -29,6 +29,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 import joblib
+import sklearn.compose._column_transformer as _ct_module
+
+if not hasattr(_ct_module, "_RemainderColsList"):
+
+    class _RemainderColsList(list):
+        """Compatibility shim for scikit-learn models serialized on older versions."""
+
+        pass
+
+    _ct_module._RemainderColsList = _RemainderColsList
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -292,15 +302,19 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
                 "risk_score": round(proba, 4),
                 "is_suspicious": is_susp,
                 "prediction_label": "Suspicious" if is_susp else "Legitimate",
-                "model_status": "xgboost_no_smote_active"
-                if "xgboost" in model_artifacts["model_name"].lower()
-                else "ml_model_active",
+                "model_status": (
+                    "xgboost_no_smote_active"
+                    if "xgboost" in model_artifacts["model_name"].lower()
+                    else "ml_model_active"
+                ),
                 "model_name": model_artifacts["model_name"],
             }
 
         except Exception as e:
             logger.error(f"Inference error with loaded model: {e}", exc_info=True)
-            fallback_reason = f"Model inference failed ({e}). Showing a rule-based estimate instead."
+            fallback_reason = (
+                f"Model inference failed ({e}). Showing a rule-based estimate instead."
+            )
 
     # Fallback heuristic if the model is unavailable or inference failed
     amount = float(data_dict.get("Amount", 0.0))
@@ -418,6 +432,8 @@ class ModelInfoResponse(BaseModel):
     preprocessor_loaded: bool
     selector_loaded: bool
     purpose: str
+    threshold: Optional[float] = 0.5
+    feature_count: Optional[int] = 0
 
 
 def classify_risk(score: float) -> str:
@@ -459,7 +475,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -480,6 +496,7 @@ async def root():
     """Root endpoint providing service status and quick links."""
     return {
         "service": "AML Transaction Monitoring ML API",
+        "description": "FastAPI lets other applications use your trained model to score financial transactions.",
         "status": "online",
         "model_loaded": model_artifacts["is_loaded"],
         "model_name": model_artifacts["model_name"],
@@ -492,6 +509,11 @@ async def root():
 @app.get("/health", response_model=ModelInfoResponse, tags=["General"])
 async def health_check():
     """Health check endpoint displaying system and model artifact status."""
+    feature_count = (
+        len(model_artifacts["feature_names"])
+        if model_artifacts.get("feature_names")
+        else 0
+    )
     return ModelInfoResponse(
         status="healthy",
         is_model_loaded=model_artifacts["is_loaded"],
@@ -500,6 +522,29 @@ async def health_check():
         preprocessor_loaded=model_artifacts["preprocessor"] is not None,
         selector_loaded=model_artifacts["selector"] is not None,
         purpose="Scores financial transactions for money-laundering risk.",
+        threshold=model_artifacts.get("threshold", 0.5),
+        feature_count=feature_count,
+    )
+
+
+@app.get("/model/info", response_model=ModelInfoResponse, tags=["General"])
+async def model_info():
+    """Detailed model status, feature count, threshold, and artifact metadata."""
+    feature_count = (
+        len(model_artifacts["feature_names"])
+        if model_artifacts.get("feature_names")
+        else 0
+    )
+    return ModelInfoResponse(
+        status="healthy" if model_artifacts["is_loaded"] else "degraded",
+        is_model_loaded=model_artifacts["is_loaded"],
+        model_name=model_artifacts["model_name"],
+        model_path=str(MODEL_PATH),
+        preprocessor_loaded=model_artifacts["preprocessor"] is not None,
+        selector_loaded=model_artifacts["selector"] is not None,
+        purpose="Scores financial transactions for money-laundering risk.",
+        threshold=model_artifacts.get("threshold", 0.5),
+        feature_count=feature_count,
     )
 
 
