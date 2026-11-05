@@ -219,6 +219,17 @@ Once running, access:
 - Interactive API documentation (Swagger UI): `http://localhost:8000/docs`
 - Alternative API documentation (ReDoc): `http://localhost:8000/redoc`
 - Health check endpoint: `http://localhost:8000/health`
+- Model info endpoint: `http://localhost:8000/model/info`
+
+### Running the Web Dashboard (Frontend)
+
+Launch the interactive Streamlit compliance officer dashboard:
+
+```bash
+streamlit run app/dashboard/app.py
+```
+
+The frontend connects directly to the FastAPI server at `http://localhost:8000` to evaluate individual transactions, run batch feeds, and render real-time SHAP/LIME feature attributions.
 
 ### Running the Notebooks
 
@@ -251,7 +262,7 @@ pytest
 - [x] Explainable AI (XAI) service using SHAP and LIME
 - [x] Real-time transaction scoring REST API with FastAPI
 - [x] Test suite covering API endpoints and explainability adapters
-- [ ] Interactive Streamlit compliance officer dashboard
+- [x] Interactive Streamlit compliance officer dashboard
 - [ ] Direct database persistence layer for alerts and audit logs
 - [ ] Graph-based entity resolution for multi-hop network detection
 
