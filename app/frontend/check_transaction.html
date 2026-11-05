@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Check Transaction | AML Monitoring System</title>
+
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+
+body {
+    background: #f3f6fb;
+    color: #0f2547;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ---------- Slim header ---------- */
+header {
+    background: #12305a;
+    padding: 0 4%;
+}
+
+.header-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    min-height: 64px;
+    padding: 8px 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 24px;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.logo h3 {
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.2px;
+}
+
+/* ---------- Backend connection status (now lives in the header) ---------- */
+.conn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.10);
+    color: #d6e4f8;
+    font-size: 13px;
+    font-weight: 500;
+}
+.conn .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #94a3b8;
+}
+.conn .dot.ok   { background: #4ade80; }
+.conn .dot.warn { background: #fbbf24; }
+.conn .dot.bad  { background: #f87171; }
+
+/* ---------- Main container ---------- */
+.container {
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 0 20px 24px;
+    flex: 1;
+}
+
+/* ---------- Hero ---------- */
+.page-heading {
+    text-align: center;
+    padding: 52px 0 32px;
+}
+
+.eyebrow {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    color: #3f5f8f;
+    margin-bottom: 14px;
+}
+
+.page-heading h1 {
+    font-size: 42px;
+    line-height: 1.1;
+    letter-spacing: -0.8px;
+    margin-bottom: 14px;
+    color: #0f2547;
+}
+
+.page-heading p {
+    color: #4a5b73;
+    font-size: 17px;
+    line-height: 1.55;
+    max-width: 520px;
+    margin: 0 auto;
+}
+
+/* ---------- Cards ---------- */
+.form-section,
+.result-section {
+    background: #fff;
+    border: 1px solid #dce3ee;
+    border-radius: 16px;
+    overflow: hidden;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 2px rgba(15, 37, 71, 0.04), 0 8px 24px rgba(15, 37, 71, 0.05);
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 20px 32px;
+    border-bottom: 1px solid #e6ecf4;
+    font-size: 18px;
+    font-weight: 600;
+    color: #0f2547;
+}
+.section-title .left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.section-title .hint {
+    font-size: 13px;
+    font-weight: 400;
+    color: #5b6b82;
+}
+
+.form-content {
+    padding: 28px 32px 32px;
+}
+
+.group {
+    margin-bottom: 28px;
+}
+
+.group-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #5b6b82;
+    margin-bottom: 14px;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: #0f2547;
+}
+
+input, select {
+    width: 100%;
+    height: 46px;
+    padding: 0 14px;
+    border: 1px solid #c9d3e2;
+    border-radius: 10px;
+    font-size: 15px;
+    outline: none;
+    color: #0f2547;
+    background: #fff;
+}
+
+input:focus, select:focus {
+    border-color: #2f6fdb;
+    box-shadow: 0 0 0 3px rgba(47, 111, 219, 0.18);
+}
+
+/* ---------- Submit button ---------- */
+.button-container {
+    text-align: center;
+    padding-top: 4px;
+}
+
+button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    max-width: 320px;
+    min-height: 48px;
+    background: #12305a;
+    color: #fff;
+    border: none;
+    padding: 0 36px;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+button:hover { background: #1d4d80; }
+button:focus-visible { outline: 2px solid #2f6fdb; outline-offset: 2px; }
+button:disabled { opacity: 0.6; cursor: wait; }
+
+/* ---------- Prediction result ---------- */
+.result-content {
+    padding: 28px 32px;
+    display: flex;
+    align-items: center;
+    gap: 24px 32px;
+    background: #f8fafc;
+}
+
+.result-icon {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 32px;
+    font-weight: 700;
+    color: #fff;
+    background: #64748b;
+}
+
+.result-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.result-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.result-text h2 {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.badge {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.score-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: #334155;
+    margin-bottom: 8px;
+}
+.score-row strong { color: #0f2547; }
+
+.bar {
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 14px;
+}
+.bar-fill {
+    height: 100%;
+    border-radius: 999px;
+}
+
+.result-text p {
+    font-size: 14px;
+    color: #334155;
+    margin-bottom: 4px;
+}
+
+.legitimate { background: #eaf7f0; }
+.legitimate .result-icon { background: #0e7a43; }
+.legitimate h2 { color: #0b5f34; }
+.legitimate .badge { background: #0e7a43; }
+.legitimate .bar { background: #cfe9db; }
+.legitimate .bar-fill { background: #0e7a43; }
+
+.suspicious { background: #fdeeec; }
+.suspicious .result-icon { background: #b42318; }
+.suspicious h2 { color: #8f1b12; }
+.suspicious .badge { background: #b42318; }
+.suspicious .bar { background: #f6cfcb; }
+.suspicious .bar-fill { background: #b42318; }
+
+.notice {
+    margin-top: 8px;
+    font-size: 14px;
+    color: #b45309;
+}
+
+footer {
+    text-align: center;
+    padding: 24px;
+    color: #5b6b82;
+    font-size: 13px;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 768px) {
+    .header-inner {
+        justify-content: center;
+        text-align: center;
+    }
+
+    .page-heading { padding-top: 36px; }
+    .page-heading h1 { font-size: 30px; }
+
+    .form-content { padding: 24px 20px; }
+    .section-title { padding: 18px 20px; }
+
+    .form-grid {
+        grid-template-columns: 1fr;
+        gap: 18px;
+    }
+
+    .result-content {
+        flex-direction: column;
+        text-align: center;
+        padding: 24px 20px;
+    }
+    .result-head { justify-content: center; }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <div class="header-inner">
+        <div class="logo">
+            <div class="logo-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+            </div>
+            <h3>AML Monitor</h3>
+        </div>
+        <p class="conn"><span class="dot" id="dot"></span><span id="connText">Connecting to the model service...</span></p>
+    </div>
+</header>
+
+<div class="container">
+
+    <div class="page-heading">
+        <span class="eyebrow">Intelligent anti-money laundering transaction monitoring using machine learning</span>
+        <h1>Check a transaction</h1>
+        <p>Enter the payment details below and the model will score it for suspicious activity.</p>
+    </div>
+
+    <section class="form-section">
+
+        <div class="section-title">
+            <div class="left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#12305a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+                Transaction details
+            </div>
+            <span class="hint">All fields are required</span>
+        </div>
+
+        <div class="form-content">
+
+            <form id="transactionForm">
+
+                <div class="group">
+                    <span class="group-label">Payment</span>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="paymentType">Payment type</label>
+                            <select id="paymentType" required>
+                                <option value="ACH">ACH</option>
+                                <option value="Cash Deposit">Cash Deposit</option>
+                                <option value="Cash Withdrawal">Cash Withdrawal</option>
+                                <option value="Cheque">Cheque</option>
+                                <option value="Credit card">Credit card</option>
+                                <option value="Cross-border">Cross-border</option>
+                                <option value="Debit card">Debit card</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="amount">Transaction amount</label>
+                            <input type="number" id="amount"
+                            placeholder="Enter amount"
+                            min="0.01" step="any" required>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="group">
+                    <span class="group-label">Currency</span>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="paymentCurrency">Currency sent</label>
+                            <select id="paymentCurrency" required></select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="receivedCurrency">Currency received</label>
+                            <select id="receivedCurrency" required></select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="group">
+                    <span class="group-label">Bank countries</span>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="senderBank">Sender bank country</label>
+                            <select id="senderBank" required></select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="receiverBank">Receiver bank country</label>
+                            <select id="receiverBank" required></select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="group">
+                    <span class="group-label">Date and time</span>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="date">Transaction date</label>
+                            <input type="date" id="date" value="2022-10-07" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="time">Transaction time</label>
+                            <input type="time" id="time" step="1" value="10:35:19" required>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="button-container">
+                    <button type="submit" id="submitBtn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                        Check transaction
+                    </button>
+                </div>
+
+            </form>
+        </div>
+    </section>
+
+    <!-- Prediction Result -->
+
+    <section class="result-section">
+
+        <div class="section-title">
+            <div class="left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#12305a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/></svg>
+                Prediction result
+            </div>
+        </div>
+
+        <div id="result" class="result-content" aria-live="polite">
+
+            <div class="result-icon">?</div>
+
+            <div class="result-text">
+                <div class="result-head"><h2>Prediction awaited</h2></div>
+                <p>
+                    Enter transaction details and click Check transaction
+                    to analyze the transaction.
+                </p>
+            </div>
+
+        </div>
+
+    </section>
+
+</div>
+
+<footer>
+    © 2026 Intelligent Anti-Money Laundering System |
+    MCA Academic Project
+</footer>
+
+<script>
+
+// Address of the FastAPI backend.
+// If this page is opened from the API server itself (port 8000), use the same address.
+// If it is opened by double-clicking the file, use the local server address.
+const API = (location.protocol.startsWith("http") && location.port === "8000")
+    ? ""
+    : "http://127.0.0.1:8000";
+
+// Dropdown values. They must match the spelling used in the training dataset.
+const CURRENCIES = ["UK pounds", "Albanian lek", "Dirham", "Euro", "Indian rupee",
+    "Mexican Peso", "Moroccan dirham", "Naira", "Pakistani rupee", "Swiss franc",
+    "Turkish lira", "US dollar", "Yen"];
+const COUNTRIES = ["UK", "Albania", "Austria", "France", "Germany", "India", "Italy",
+    "Japan", "Mexico", "Morocco", "Netherlands", "Nigeria", "Pakistan", "Spain",
+    "Switzerland", "Turkey", "UAE", "USA"];
+
+function fillSelect(id, values) {
+    const select = document.getElementById(id);
+    values.forEach(function(v) { select.add(new Option(v, v)); });
+}
+fillSelect("paymentCurrency", CURRENCIES);
+fillSelect("receivedCurrency", CURRENCIES);
+fillSelect("senderBank", COUNTRIES);
+fillSelect("receiverBank", COUNTRIES);
+
+// Show whether the backend is running and the model is loaded.
+async function checkBackend() {
+    const dot = document.getElementById("dot");
+    const text = document.getElementById("connText");
+    try {
+        const res = await fetch(API + "/health");
+        const h = await res.json();
+        if (h.is_model_loaded && h.selector_loaded) {
+            dot.className = "dot ok";
+            text.textContent = "Model connected · " + h.model_name;
+        } else {
+            dot.className = "dot warn";
+            text.textContent = "Backend running, trained model not loaded yet";
+        }
+    } catch (e) {
+        dot.className = "dot bad";
+        text.textContent = "Cannot reach the backend. Start the API server and refresh.";
+    }
+}
+checkBackend();
+
+// opts (all optional): badge = pill text, score = number between 0 and 1 for the risk bar
+function showResult(className, icon, title, lines, opts) {
+    opts = opts || {};
+    const result = document.getElementById("result");
+    result.className = "result-content " + className;
+    result.innerHTML = "";
+
+    const iconDiv = document.createElement("div");
+    iconDiv.className = "result-icon";
+    iconDiv.textContent = icon;
+
+    const textDiv = document.createElement("div");
+    textDiv.className = "result-text";
+
+    const head = document.createElement("div");
+    head.className = "result-head";
+    const h2 = document.createElement("h2");
+    h2.textContent = title;
+    head.appendChild(h2);
+    if (opts.badge) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = opts.badge;
+        head.appendChild(badge);
+    }
+    textDiv.appendChild(head);
+
+    if (typeof opts.score === "number" && isFinite(opts.score)) {
+        const row = document.createElement("div");
+        row.className = "score-row";
+        const label = document.createElement("span");
+        label.textContent = "Risk score";
+        const value = document.createElement("strong");
+        value.textContent = opts.score.toFixed(4);
+        row.appendChild(label);
+        row.appendChild(value);
+        textDiv.appendChild(row);
+
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        const fill = document.createElement("div");
+        fill.className = "bar-fill";
+        fill.style.width = Math.max(0, Math.min(1, opts.score)) * 100 + "%";
+        bar.appendChild(fill);
+        textDiv.appendChild(bar);
+    }
+
+    lines.forEach(function(line) {
+        const p = document.createElement("p");
+        p.textContent = line.text;
+        if (line.notice) p.className = "notice";
+        textDiv.appendChild(p);
+    });
+
+    result.appendChild(iconDiv);
+    result.appendChild(textDiv);
+}
+
+document.getElementById("transactionForm")
+.addEventListener("submit", async function(event) {
+
+    event.preventDefault();
+
+    // Field names must match what the FastAPI /predict endpoint expects.
+    const transaction = {
+        Amount: Number(document.getElementById("amount").value),
+        Payment_type: document.getElementById("paymentType").value,
+        Payment_currency: document.getElementById("paymentCurrency").value,
+        Received_currency: document.getElementById("receivedCurrency").value,
+        Sender_bank_location: document.getElementById("senderBank").value,
+        Receiver_bank_location: document.getElementById("receiverBank").value,
+        Date: document.getElementById("date").value,
+        Time: document.getElementById("time").value.length === 5
+            ? document.getElementById("time").value + ":00"
+            : document.getElementById("time").value
+    };
+
+    const button = document.getElementById("submitBtn");
+    button.disabled = true;
+    showResult("", "…", "Analyzing transaction...",
+        [{ text: "Please wait while the transaction is being checked." }]);
+
+    try {
+
+        const response = await fetch(API + "/predict", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(transaction)
+        });
+
+        if (!response.ok) {
+            throw new Error("Prediction service returned an error");
+        }
+
+        const data = await response.json();
+
+        const lines = [
+            { text: "Model: " + data.model_name }
+        ];
+        if (data.model_status === "awaiting_model") {
+            lines.push({
+                text: "The trained model is not loaded, so this result is a simple rule-based estimate.",
+                notice: true
+            });
+        }
+
+        const opts = {
+            score: data.risk_score,
+            badge: data.risk_level + " risk"
+        };
+
+        if (data.is_suspicious) {
+            showResult("suspicious", "!", "Suspicious transaction", lines, opts);
+        } else {
+            showResult("legitimate", "✓", "Legitimate transaction", lines, opts);
+        }
+
+    } catch (error) {
+
+        showResult("suspicious", "!", "Prediction service unavailable", [
+            { text: "Unable to connect to the machine learning model. Please check that the backend server is running." }
+        ]);
+
+    } finally {
+        button.disabled = false;
+    }
+
+});
+
+</script>
+
+</body>
+</html>

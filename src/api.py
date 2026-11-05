@@ -1,17 +1,18 @@
 """FastAPI Application for Real-Time AML Transaction Monitoring and Anomaly Detection.
 
 Purpose:
-FastAPI lets other applications use your trained model to detect suspicious
-network traffic and financial transactions without opening your Kaggle notebook.
+FastAPI lets other applications (such as the web frontend) use the trained
+XGBoost model to score financial transactions.
 
 Run the API:
-    $ uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
-Or directly:
-    $ python src/api.py
+    $ python -m uvicorn src.api:app --host 127.0.0.1 --port 8000 --reload
 Interactive API Documentation (Swagger UI):
     http://localhost:8000/docs
+Frontend (served by this API):
+    http://127.0.0.1:8000/app/check_transaction.html
 """
 
+import json
 import os
 import sys
 import time
@@ -22,8 +23,10 @@ from contextlib import asynccontextmanager
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 import joblib
 
@@ -53,18 +56,14 @@ logger = logging.getLogger("aml_api")
 
 
 # ==============================================================================
-# 🎯 MODEL LOADING & INFERENCE (XGBoost No SMOTE Selected Model)
+# MODEL LOADING & INFERENCE (XGBoost No SMOTE)
 # ==============================================================================
 
-# Default path to trained model file (XGBoost No SMOTE)
-DEFAULT_MODEL_FILENAME = "best_model.joblib"
+# Default model file: the XGBoost JSON exported from Colab.
+DEFAULT_MODEL_FILENAME = "xgboost_no_smote.json"
 MODEL_PATH = Path(os.getenv("MODEL_PATH", str(MODELS_DIR / DEFAULT_MODEL_FILENAME)))
-PREPROCESSOR_PATH = (
-    MODELS_DIR / "preprocessor.joblib"
-    if (MODELS_DIR / "preprocessor.joblib").exists()
-    else PROCESSED_DATA_DIR / "preprocessor.joblib"
-)
-SELECTOR_PATH = PROCESSED_DATA_DIR / "selector.joblib"
+PREPROCESSOR_PATH = MODELS_DIR / "preprocessor.joblib"
+SELECTOR_PATH = MODELS_DIR / "selector.joblib"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
 FEATURE_NAMES_PATH = MODELS_DIR / "feature_names.json"
 
@@ -89,32 +88,36 @@ def load_model_artifacts():
     """Loads the trained XGBoost (No SMOTE) model and preprocessing pipeline from disk."""
     logger.info("Attempting to load model artifacts...")
 
-    # 1. Check for Preprocessor
-    target_prep_path = (
-        MODELS_DIR / "preprocessor.joblib"
-        if (MODELS_DIR / "preprocessor.joblib").exists()
-        else PREPROCESSOR_PATH
-    )
-    if target_prep_path.exists():
-        try:
-            model_artifacts["preprocessor"] = joblib.load(target_prep_path)
-            logger.info(f"Loaded feature preprocessor from: {target_prep_path}")
-        except Exception as e:
-            logger.warning(f"Could not load preprocessor ({e}). Proceeding without it.")
+    # Reset so a reload never keeps stale objects.
+    model_artifacts["model"] = None
+    model_artifacts["preprocessor"] = None
+    model_artifacts["selector"] = None
+    model_artifacts["feature_names"] = None
+    model_artifacts["is_loaded"] = False
 
-    # 2. Check for Feature Selector
+    # 1. Preprocessor
+    if PREPROCESSOR_PATH.exists():
+        try:
+            model_artifacts["preprocessor"] = joblib.load(PREPROCESSOR_PATH)
+            logger.info(f"Loaded feature preprocessor from: {PREPROCESSOR_PATH}")
+        except Exception as e:
+            logger.warning(f"Could not load preprocessor ({e}).")
+    else:
+        logger.warning(f"Preprocessor not found at {PREPROCESSOR_PATH}")
+
+    # 2. Feature selector
     if SELECTOR_PATH.exists():
         try:
             model_artifacts["selector"] = joblib.load(SELECTOR_PATH)
             logger.info(f"Loaded feature selector from: {SELECTOR_PATH}")
         except Exception as e:
-            logger.warning(f"Could not load selector ({e}). Proceeding without it.")
+            logger.warning(f"Could not load selector ({e}).")
+    else:
+        logger.warning(f"Selector not found at {SELECTOR_PATH}")
 
-    # 3. Load Feature Names if present
+    # 3. Feature names (the 41 selected features)
     if FEATURE_NAMES_PATH.exists():
         try:
-            import json
-
             with open(FEATURE_NAMES_PATH) as f:
                 model_artifacts["feature_names"] = json.load(f)
             logger.info(
@@ -123,11 +126,9 @@ def load_model_artifacts():
         except Exception as e:
             logger.warning(f"Could not load feature names ({e}).")
 
-    # 4. Load Metadata (tuned thresholds, training tags)
+    # 4. Metadata (tuned threshold, model name)
     if METADATA_PATH.exists():
         try:
-            import json
-
             with open(METADATA_PATH) as f:
                 meta = json.load(f)
             model_artifacts["metadata"] = meta
@@ -141,20 +142,20 @@ def load_model_artifacts():
         except Exception as e:
             logger.warning(f"Could not load model metadata: {e}")
 
-    # 5. Determine candidate model file path
+    # 5. Choose the model file (JSON preferred, then joblib)
     candidate_path = MODEL_PATH
     if not candidate_path.exists():
         alt_paths = [
+            MODELS_DIR / "xgboost_no_smote.json",
             MODELS_DIR / "xgboost_no_smote.joblib",
             MODELS_DIR / "best_model.joblib",
-            MODELS_DIR / "xgboost_no_smote.json",
         ]
         for p in alt_paths:
             if p.exists():
                 candidate_path = p
                 break
 
-    # 6. Load Trained XGBoost / ML Model
+    # 6. Load the trained model
     if candidate_path.exists():
         try:
             if str(candidate_path).endswith(".json"):
@@ -186,7 +187,7 @@ def load_model_artifacts():
         model_artifacts["is_loaded"] = False
         model_artifacts["model_name"] = "Mock-Predictor (Waiting for model)"
 
-    # 7. Synchronize Explainability Service with Loaded Artifacts
+    # 7. Synchronize the explainability service
     if model_artifacts["is_loaded"] and model_artifacts["model"] is not None:
         try:
             explainability_service.set_model_artifacts(
@@ -200,11 +201,51 @@ def load_model_artifacts():
             logger.warning(f"Could not configure ExplainabilityService with model: {e}")
 
 
+# Outlier bounds computed from the training data (IQR rule on Amount).
+AMOUNT_LOWER, AMOUNT_UPPER = -10328.474999999999, 22930.625
+
+
+def build_features(tx: dict) -> pd.DataFrame:
+    """Builds the same 17 columns that the training notebook used."""
+    amount = float(tx.get("Amount") or 0.0)
+    d = pd.to_datetime(tx.get("Date"), errors="coerce")
+    t = pd.to_datetime(tx.get("Time"), format="%H:%M:%S", errors="coerce")
+    hour = int(t.hour) if pd.notna(t) else 12
+    dow = int(d.dayofweek) if pd.notna(d) else 0
+    sender = tx.get("Sender_bank_location")
+    receiver = tx.get("Receiver_bank_location")
+    return pd.DataFrame(
+        [
+            {
+                "Amount": amount,
+                "Log_amount": np.log1p(max(amount, 0.0)),
+                "Amount_outlier": int(amount < AMOUNT_LOWER or amount > AMOUNT_UPPER),
+                "Year": int(d.year) if pd.notna(d) else 2022,
+                "Month": int(d.month) if pd.notna(d) else 1,
+                "Day": int(d.day) if pd.notna(d) else 1,
+                "DayOfWeek": dow,
+                "Is_weekend": int(dow >= 5),
+                "Hour": hour,
+                "Is_night": int(hour < 6 or hour >= 22),
+                "Same_currency": int(
+                    tx.get("Payment_currency") == tx.get("Received_currency")
+                ),
+                "Cross_border": int(sender != receiver),
+                "Payment_currency": tx.get("Payment_currency"),
+                "Received_currency": tx.get("Received_currency"),
+                "Sender_bank_location": sender,
+                "Receiver_bank_location": receiver,
+                "Payment_type": tx.get("Payment_type"),
+            }
+        ]
+    )
+
+
 def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute prediction pipeline on an incoming transaction using the XGBoost (No SMOTE) model.
+    """Score one transaction with the XGBoost (No SMOTE) model.
 
     Args:
-        data_dict: Dictionary containing transaction features.
+        data_dict: Dictionary containing transaction fields.
 
     Returns:
         Dictionary with prediction label, risk score, and metadata.
@@ -213,27 +254,27 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
     preprocessor = model_artifacts.get("preprocessor")
     selector = model_artifacts.get("selector")
     threshold = model_artifacts.get("threshold", 0.5)
+    fallback_reason = None
 
-    # If the trained model is loaded, execute ML inference
     if model_artifacts["is_loaded"] and model is not None:
         try:
-            from src.features.pipeline import engineer_features
+            if preprocessor is None or selector is None:
+                raise RuntimeError(
+                    "preprocessor.joblib and selector.joblib must both be in models_saved/"
+                )
 
-            # Apply domain feature transformations
-            df_eng = engineer_features(data_dict)
+            # raw fields -> 17 columns -> 81 encoded features -> 41 selected features
+            X_input = preprocessor.transform(build_features(data_dict))
+            X_input = selector.transform(X_input)
+            if sp.issparse(X_input):
+                X_input = X_input.toarray()
+            X_input = np.asarray(X_input, dtype=np.float32)
 
-            # Transform through preprocessor pipeline
-            X_input = df_eng
-            if preprocessor is not None:
-                try:
-                    X_input = preprocessor.transform(df_eng)
-                    if selector is not None:
-                        try:
-                            X_input = selector.transform(X_input)
-                        except Exception:
-                            pass
-                except Exception as prep_err:
-                    logger.debug(f"Preprocessing transform fallback: {prep_err}")
+            expected = getattr(model, "n_features_in_", None)
+            if expected is not None and X_input.shape[1] != expected:
+                raise ValueError(
+                    f"Model expects {expected} features but pipeline produced {X_input.shape[1]}"
+                )
 
             # Predict probability
             if hasattr(model, "predict_proba"):
@@ -245,8 +286,7 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
                 pred = int(model.predict(X_input)[0])
                 proba = 1.0 if pred == 1 else 0.0
 
-            prediction = int(proba >= threshold)
-            is_susp = bool(prediction == 1)
+            is_susp = bool(proba >= threshold)
 
             return {
                 "risk_score": round(proba, 4),
@@ -260,9 +300,9 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
 
         except Exception as e:
             logger.error(f"Inference error with loaded model: {e}", exc_info=True)
-            pass
+            fallback_reason = f"Model inference failed ({e}). Showing a rule-based estimate instead."
 
-    # Fallback heuristic calculation if model unavailable
+    # Fallback heuristic if the model is unavailable or inference failed
     amount = float(data_dict.get("Amount", 0.0))
     is_cross_border = data_dict.get("Sender_bank_location") != data_dict.get(
         "Receiver_bank_location"
@@ -286,17 +326,18 @@ def predict_single_transaction(data_dict: Dict[str, Any]) -> Dict[str, Any]:
         "prediction_label": "Suspicious" if is_suspicious else "Legitimate",
         "model_status": "awaiting_model",
         "model_name": model_artifacts["model_name"],
-        "note": "Using rule-based simulation. Trained XGBoost model active when artifacts are placed in 'models_saved/'.",
+        "note": fallback_reason
+        or "Using rule-based simulation. Trained model becomes active when artifacts are placed in 'models_saved/'.",
     }
 
 
 # ==============================================================================
-# 📋 PYDANTIC SCHEMAS (REQUEST & RESPONSE MODELS)
+# PYDANTIC SCHEMAS (REQUEST & RESPONSE MODELS)
 # ==============================================================================
 
 
 class TransactionInput(BaseModel):
-    """Schema representing an incoming financial transaction or network event."""
+    """Schema representing an incoming financial transaction."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -310,7 +351,7 @@ class TransactionInput(BaseModel):
         default=12500.00, ge=0.0, description="Transaction monetary amount"
     )
     Payment_currency: Optional[str] = Field(
-        default="US Dollar", description="Currency sent"
+        default="US dollar", description="Currency sent"
     )
     Received_currency: Optional[str] = Field(
         default="Euro", description="Currency received"
@@ -379,8 +420,17 @@ class ModelInfoResponse(BaseModel):
     purpose: str
 
 
+def classify_risk(score: float) -> str:
+    """Map a risk score to a Low / Medium / High label."""
+    if score >= 0.75:
+        return "High"
+    if score >= 0.40:
+        return "Medium"
+    return "Low"
+
+
 # ==============================================================================
-# 🚀 FASTAPI APP INITIALIZATION & LIFESPAN
+# FASTAPI APP INITIALIZATION & LIFESPAN
 # ==============================================================================
 
 
@@ -396,10 +446,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Intelligent AML Transaction Monitoring API",
     description=(
-        "Production-grade FastAPI serving Machine Learning models for real-time "
-        "Anti-Money Laundering (AML) transaction monitoring and suspicious activity detection. "
-        "FastAPI lets other applications use your trained model to detect suspicious "
-        "network traffic and transactions without opening your Kaggle notebook."
+        "FastAPI serving a machine learning model for Anti-Money Laundering (AML) "
+        "transaction monitoring and suspicious activity detection."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -407,18 +455,23 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Enable CORS for external dashboards and microservices
+# Enable CORS so the frontend can call the API even when opened as a local file
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Serve the frontend pages at /app/...
+FRONTEND_DIR = PROJECT_ROOT / "app" / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+
 
 # ==============================================================================
-# 🌐 API ENDPOINTS
+# API ENDPOINTS
 # ==============================================================================
 
 
@@ -427,12 +480,12 @@ async def root():
     """Root endpoint providing service status and quick links."""
     return {
         "service": "AML Transaction Monitoring ML API",
-        "description": "FastAPI lets other applications use your trained model to detect suspicious network traffic without opening your Kaggle notebook.",
         "status": "online",
         "model_loaded": model_artifacts["is_loaded"],
         "model_name": model_artifacts["model_name"],
         "docs_url": "/docs",
         "health_check": "/health",
+        "frontend": "/app/check_transaction.html",
     }
 
 
@@ -446,17 +499,13 @@ async def health_check():
         model_path=str(MODEL_PATH),
         preprocessor_loaded=model_artifacts["preprocessor"] is not None,
         selector_loaded=model_artifacts["selector"] is not None,
-        purpose="FastAPI lets other applications use your trained model to detect suspicious network traffic without opening your Kaggle notebook.",
+        purpose="Scores financial transactions for money-laundering risk.",
     )
 
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Inference"])
 async def predict_transaction(transaction: TransactionInput):
-    """Predict whether a single transaction is suspicious or legitimate.
-
-    Accepts transaction attributes, performs feature extraction, and runs
-    inference against the trained ML model.
-    """
+    """Predict whether a single transaction is suspicious or legitimate."""
     start_time = time.time()
     data_dict = transaction.model_dump()
 
@@ -471,22 +520,13 @@ async def predict_transaction(transaction: TransactionInput):
 
     elapsed_ms = round((time.time() - start_time) * 1000, 2)
     score = res["risk_score"]
-
-    # Classify risk level
-    if score >= 0.75:
-        risk_level = "High"
-    elif score >= 0.40:
-        risk_level = "Medium"
-    else:
-        risk_level = "Low"
-
     tx_id = data_dict.get("Sender_account", "unknown")
 
     return PredictionResponse(
         transaction_id=str(tx_id),
         is_suspicious=res["is_suspicious"],
         risk_score=score,
-        risk_level=risk_level,
+        risk_level=classify_risk(score),
         prediction_label=res["prediction_label"],
         model_status=res["model_status"],
         model_name=res["model_name"],
@@ -497,10 +537,7 @@ async def predict_transaction(transaction: TransactionInput):
 
 @app.post("/predict/batch", response_model=BatchPredictionResponse, tags=["Inference"])
 async def predict_batch(batch_input: BatchTransactionInput):
-    """Process a batch of transactions in a single API call.
-
-    Ideal for streaming transaction feeds or asynchronous pipeline audits.
-    """
+    """Process a batch of transactions in a single API call."""
     start_time = time.time()
     results = []
     suspicious_count = 0
@@ -512,13 +549,6 @@ async def predict_batch(batch_input: BatchTransactionInput):
         item_elapsed = round((time.time() - item_start) * 1000, 2)
 
         score = res["risk_score"]
-        if score >= 0.75:
-            risk_level = "High"
-        elif score >= 0.40:
-            risk_level = "Medium"
-        else:
-            risk_level = "Low"
-
         if res["is_suspicious"]:
             suspicious_count += 1
 
@@ -529,7 +559,7 @@ async def predict_batch(batch_input: BatchTransactionInput):
                 transaction_id=str(tx_id),
                 is_suspicious=res["is_suspicious"],
                 risk_score=score,
-                risk_level=risk_level,
+                risk_level=classify_risk(score),
                 prediction_label=res["prediction_label"],
                 model_status=res["model_status"],
                 model_name=res["model_name"],
@@ -554,19 +584,13 @@ async def explain_transaction_endpoint(
     method: str = "shap",
     top_k: int = 10,
 ):
-    """Generate dual-granularity SHAP or LIME explanation for an individual transaction.
-
-    Args:
-        transaction: Incoming transaction attributes payload.
-        method: Explanation algorithm ('shap' by default, 'lime' on demand).
-        top_k: Maximum number of top features to return in raw and domain views.
-    """
+    """Generate a SHAP or LIME explanation for an individual transaction."""
     if not model_artifacts["is_loaded"] or model_artifacts["model"] is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "Machine learning model is not loaded. Place a trained model in "
-                "'models_saved/best_model.joblib' or reload artifacts to generate explanations."
+                "Machine learning model is not loaded. Place the trained model in "
+                "'models_saved/xgboost_no_smote.json' and call /model/reload."
             ),
         )
 
@@ -608,15 +632,12 @@ async def explain_transaction_endpoint(
 
 @app.post("/model/reload", tags=["Administration"])
 async def reload_model():
-    """Hot-reload model artifacts from disk without restarting the API server.
-
-    Use this endpoint after copying your trained Kaggle model to 'models_saved/'.
-    """
+    """Hot-reload model artifacts from disk without restarting the API server."""
     logger.info("Admin triggered model reload endpoint.")
     load_model_artifacts()
     return {
         "status": "success",
-        "message": "Model artifacts reloaded successfully.",
+        "message": "Model artifacts reloaded.",
         "is_model_loaded": model_artifacts["is_loaded"],
         "model_name": model_artifacts["model_name"],
         "model_path": str(MODEL_PATH),
@@ -626,4 +647,4 @@ async def reload_model():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("src.api:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)

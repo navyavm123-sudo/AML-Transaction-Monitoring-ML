@@ -1,22 +1,32 @@
 {
-  "model_name": "XGBoost_No_SMOTE",
+  "model_name": "XGBoost (No SMOTE)",
   "class_name": "XGBClassifier",
-  "source_notebook": "notebooks/XGBoost_No_SMOTE",
-  "n_estimators": 300,
-  "learning_rate": 0.1,
-  "max_depth": 6,
-  "scale_pos_weight": 8.63,
-  "n_features": 86505,
-  "validation_metrics": {
-    "accuracy": 1.0,
-    "precision": 1.0,
-    "recall": 1.0,
-    "f1": 1.0,
-    "roc_auc": 1.0,
-    "pr_auc": 0.9999999999999998,
-    "best_threshold": 0.9991157650947571,
-    "default_threshold": 0.5
+  "dataset": "SAML-D",
+  "source_notebook": "Colab: XGBoost No SMOTE (tuned)",
+  "n_features": 41,
+  "threshold": 0.5583,
+  "threshold_rule": "Best F1 on the validation set",
+  "best_params": {
+    "n_estimators": 300,
+    "learning_rate": 0.1,
+    "max_depth": 5,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 10,
+    "scale_pos_weight": 1.0
   },
-  "threshold": 0.9991157650947571,
-  "created_at": "2026-11-01 21:34:47"
+  "test_metrics_at_threshold": {
+    "accuracy": 0.9990,
+    "precision": 0.7083,
+    "recall": 0.0817,
+    "f1": 0.1466,
+    "roc_auc": 0.8116,
+    "pr_auc": 0.0923,
+    "mcc": 0.2404
+  },
+  "test_set": {
+    "rows": 200000,
+    "laundering_cases": 208
+  }
 }
