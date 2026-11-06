@@ -125,12 +125,19 @@ class ExplainabilityService:
 
         return names
 
-    def get_background_data(self) -> Union[np.ndarray, scipy.sparse.spmatrix]:
+    def get_background_data(self) -> Optional[Union[np.ndarray, scipy.sparse.spmatrix]]:
         """Retrieve or lazily sample uncontaminated background reference data."""
         if self.background_data is None:
-            self.background_data = (
-                self.background_selector.sample_legitimate_background()
-            )
+            try:
+                self.background_data = (
+                    self.background_selector.sample_legitimate_background()
+                )
+            except (FileNotFoundError, ExplainabilityError) as e:
+                logger.warning(
+                    f"Could not automatically load empirical background data: {e}. "
+                    "Proceeding without background data."
+                )
+                return None
         return self.background_data
 
     def get_explainer(self, method: str = "shap") -> BaseExplainer:

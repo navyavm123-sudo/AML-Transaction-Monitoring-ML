@@ -10,6 +10,7 @@ Interactive API Documentation (Swagger UI):
     http://localhost:8000/docs
 Frontend (served by this API):
     http://127.0.0.1:8000/app/check_transaction.html
+    .\venv\Scripts\Activate.ps1 ACTIVATE VENV
 """
 
 import json
@@ -29,6 +30,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 import joblib
+import sklearn.compose._column_transformer as ct_module
+
+# Compatibility shim for unpickling ColumnTransformer across sklearn versions
+if not hasattr(ct_module, "_RemainderColsList"):
+    class _RemainderColsList(list):
+        pass
+
+    ct_module._RemainderColsList = _RemainderColsList
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -211,7 +220,7 @@ def build_features(tx: dict) -> pd.DataFrame:
     d = pd.to_datetime(tx.get("Date"), errors="coerce")
     t = pd.to_datetime(tx.get("Time"), format="%H:%M:%S", errors="coerce")
     hour = int(t.hour) if pd.notna(t) else 12
-    dow = int(d.dayofweek) if pd.notna(d) else 0
+    dow = int(getattr(d, "day_of_week", d.dayofweek)) if pd.notna(d) else 0
     sender = tx.get("Sender_bank_location")
     receiver = tx.get("Receiver_bank_location")
     return pd.DataFrame(
@@ -480,6 +489,7 @@ async def root():
     """Root endpoint providing service status and quick links."""
     return {
         "service": "AML Transaction Monitoring ML API",
+        "description": "FastAPI lets other applications use your trained model to detect suspicious network traffic without opening your Kaggle notebook.",
         "status": "online",
         "model_loaded": model_artifacts["is_loaded"],
         "model_name": model_artifacts["model_name"],

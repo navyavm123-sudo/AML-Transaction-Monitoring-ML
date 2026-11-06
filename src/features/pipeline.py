@@ -69,17 +69,24 @@ def engineer_features(
         df["Amount"] = 0.0
 
     df["Log_amount"] = np.log1p(df["Amount"])
+    amount_lower, amount_upper = -10328.474999999999, 22930.625
+    df["Amount_outlier"] = ((df["Amount"] < amount_lower) | (df["Amount"] > amount_upper)).astype(int)
 
     # 3. Date & Weekend Indicator
     date_col = df["Date"] if "Date" in df.columns else pd.Series(["2023-01-01"] * len(df))
     date_dt = pd.to_datetime(date_col, errors="coerce")
-    day_of_week = date_dt.dt.dayofweek.fillna(0)
+    df["Year"] = date_dt.dt.year.fillna(2022).astype(int)
+    df["Month"] = date_dt.dt.month.fillna(1).astype(int)
+    df["Day"] = date_dt.dt.day.fillna(1).astype(int)
+    day_of_week = getattr(date_dt.dt, "day_of_week", date_dt.dt.dayofweek).fillna(0).astype(int)
+    df["DayOfWeek"] = day_of_week
     df["Is_weekend"] = (day_of_week >= 5).astype(int)
 
     # 4. Time & Night Indicator
     time_col = df["Time"] if "Time" in df.columns else pd.Series(["12:00:00"] * len(df))
     time_series = pd.to_datetime(time_col, format="%H:%M:%S", errors="coerce")
-    hour = time_series.dt.hour.fillna(12)
+    hour = time_series.dt.hour.fillna(12).astype(int)
+    df["Hour"] = hour
     df["Is_night"] = ((hour < 6) | (hour >= 22)).astype(int)
 
     # Standardize Time format if needed
